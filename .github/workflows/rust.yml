@@ -47,6 +47,8 @@ jobs:
                   sudo dpkg --add-architecture i386
                   sudo apt-get update
                   sudo apt-get install -y gcc-multilib libwayland-dev:i386 pkg-config
+                  echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
+                  echo "PKG_CONFIG_PATH=/usr/lib/i386-linux-gnu/pkgconfig" >> $GITHUB_ENV
 
             - name: Install Rust toolchain
               uses: dtolnay/rust-toolchain@stable
