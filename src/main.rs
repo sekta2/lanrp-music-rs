@@ -17,7 +17,25 @@ const CREDITS: &str = "written in Rust with ❤️  by sekta; Original by rty000
 const CATEGORIES: &[&str] = &["calm", "epic", "other", "tense"];
 
 //
-//`
+//
+// Set Window Title
+//
+//
+
+fn set_app_title(title: &str) {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = winconsole::console::set_title(title);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        print!("\x1B]0;{}\x07", title);
+    }
+}
+
+//
+//
 // Steam&Game Path
 //
 //
@@ -153,7 +171,7 @@ fn add_music() {
         return;
     }
 
-    let _ = winconsole::console::set_title("lanrp-music-rs - add music");
+    let _ = set_app_title("lanrp-music-rs - add music");
 
     // Cats
 
@@ -235,7 +253,7 @@ fn delete_music() {
         return;
     }
 
-    let _ = winconsole::console::set_title("lanrp-music-rs - delete music");
+    let _ = set_app_title("lanrp-music-rs - delete music");
 
     // Category
 
@@ -380,7 +398,7 @@ fn list_music() {
     }
 
     clear().unwrap();
-    let _ = winconsole::console::set_title("lanrp-music-rs - music list");
+    let _ = set_app_title("lanrp-music-rs - music list");
 
     let Some((game_path, _lib)) = get_game_path() else {
         return;
@@ -478,7 +496,7 @@ fn main() {
         };
 
         clear().unwrap();
-        let _ = winconsole::console::set_title("lanrp-music-rs");
+        let _ = set_app_title("lanrp-music-rs");
 
         let mod_creds = style(CREDITS).bold();
 
