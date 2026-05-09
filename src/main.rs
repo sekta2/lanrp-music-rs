@@ -1,20 +1,143 @@
+use anyhow::{Context, Result, anyhow};
 use clearscreen::clear;
 use console::style;
 use std::{
     fs,
     io::{self, Write, stdout},
     path::PathBuf,
+    process::Command,
     thread,
     time::{self, Duration},
 };
 
-use anyhow::{Context, Result, anyhow};
-
 const GAME_ID: u32 = 4_000;
 const ADDON_NAME: &str = "ChangerMusicLanRP";
+const CONTENT_ADDON_ID: &str = "3310371040";
 const NEEDED_HZ: u32 = 44_100;
 const CREDITS: &str = "written in Rust with ❤️  by sekta; Original by rty000pro";
 const CATEGORIES: &[&str] = &["calm", "epic", "other", "tense"];
+
+//
+//
+// Check content
+//
+//
+
+fn check_content() {
+    let Some((gmod_path, lib)) = get_game_path() else {
+        println!("Garry's Mod not found, skipping content check...");
+        thread::sleep(Duration::from_secs(2));
+        return;
+    };
+
+    let content_addon_path = lib
+        .join("steamapps")
+        .join("workshop")
+        .join("content")
+        .join(GAME_ID.to_string())
+        .join(CONTENT_ADDON_ID)
+        .join("gmpublisher.gma");
+
+    if !content_addon_path.exists() {
+        println!("Content file (gmpublisher.gma) not found.");
+        thread::sleep(Duration::from_secs(2));
+        return;
+    }
+
+    let gmad_path = gmod_path.join("bin").join("gmad.exe");
+
+    let Some(home_dir) = dirs::home_dir() else {
+        println!("Failed to locate user's home directory.");
+        thread::sleep(Duration::from_secs(2));
+        return;
+    };
+
+    let base_dir = home_dir.join(".lanrp-music");
+    let content_dir = base_dir.join("content");
+    let meta_file = base_dir.join("gma_meta.txt");
+
+    if let Err(e) = fs::create_dir_all(&base_dir) {
+        println!("Failed to create directory {}: {}", base_dir.display(), e);
+        thread::sleep(Duration::from_secs(2));
+        return;
+    }
+
+    print!("Checking content up-to-date (reading metadata)... ");
+    let _ = stdout().flush();
+
+    let metadata = match fs::metadata(&content_addon_path) {
+        Ok(m) => m,
+        Err(e) => {
+            println!("\nError reading gma metadata: {}", e);
+            thread::sleep(Duration::from_secs(2));
+            return;
+        }
+    };
+
+    let modified_time = metadata.modified().unwrap_or(std::time::UNIX_EPOCH);
+    let duration = modified_time
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let file_size = metadata.len();
+
+    let current_meta = format!("{}_{}", file_size, duration);
+
+    let mut needs_extraction = true;
+    if meta_file.exists() && content_dir.exists() {
+        if let Ok(saved_meta) = fs::read_to_string(&meta_file) {
+            if saved_meta.trim() == current_meta {
+                needs_extraction = false;
+            }
+        }
+    }
+
+    if !needs_extraction {
+        println!("OK!\nContent is up to date, extraction is not required.");
+        thread::sleep(Duration::from_secs(1));
+        return;
+    }
+
+    println!("Update or missing content detected!");
+    println!("Extracting content to {}...", content_dir.display());
+
+    if content_dir.exists() {
+        let _ = fs::remove_dir_all(&content_dir);
+    }
+
+    let _ = fs::create_dir_all(&content_dir);
+
+    if cfg!(target_os = "windows") {
+        match Command::new(&gmad_path)
+            .arg("extract")
+            .arg("-file")
+            .arg(&content_addon_path)
+            .arg("-out")
+            .arg(&content_dir)
+            .output()
+        {
+            Ok(output) => {
+                if output.status.success() {
+                    if let Err(e) = fs::write(&meta_file, &current_meta) {
+                        println!("Extraction successful, but failed to save metadata: {}", e);
+                    } else {
+                        println!("Content successfully updated and extracted!");
+                    }
+                } else {
+                    println!("GMAD extraction error:");
+                    println!("{}", String::from_utf8_lossy(&output.stderr));
+                }
+            }
+            Err(e) => {
+                println!("Failed to execute gmad.exe: {}", e);
+            }
+        }
+    } else {
+        println!("Linux content extraction not implemented...");
+    };
+
+    thread::sleep(Duration::from_secs(3));
+}
 
 //
 //
@@ -403,6 +526,7 @@ fn list_music() {
     let Some((game_path, _lib)) = get_game_path() else {
         return;
     };
+
     let addon_path = game_path
         .join("garrysmod")
         .join("addons")
@@ -411,48 +535,67 @@ fn list_music() {
         .join("lanrp")
         .join("music");
 
+    let content_base_path = dirs::home_dir().map(|h| {
+        h.join(".lanrp-music")
+            .join("content")
+            .join("sound")
+            .join("lanrp")
+            .join("music")
+    });
+
     for cat in CATEGORIES {
-        let cat_path = addon_path.join(cat);
-        let iter = match fs::read_dir(cat_path) {
-            Ok(res) => res,
-            Err(err) => {
-                println!(
-                    "{}: {err}",
-                    style("Error occured when reading category directory").red()
-                );
-                thread::sleep(Duration::from_secs(3));
-                return;
-            }
-        };
         println!("{}", cat);
+        let mut total_files = 0;
 
-        let mut i = 0;
-        for file in iter {
-            let file = match file {
-                Ok(res) => res,
-                Err(err) => {
-                    println!(
-                        "{}: {err}",
-                        style("Error occured when reading directory file").red()
-                    );
-                    thread::sleep(Duration::from_secs(3));
-                    return;
+        let mut content_files = Vec::new();
+        let mut added_files = Vec::new();
+
+        if let Some(ref base) = content_base_path {
+            let content_cat_path = base.join(cat);
+            if let Ok(iter) = fs::read_dir(&content_cat_path) {
+                for file in iter {
+                    if let Ok(entry) = file {
+                        content_files.push(entry.file_name().to_string_lossy().to_string());
+                    }
                 }
-            };
-            println!(
-                "  {}",
-                style(file.file_name().display().to_string()).green()
-            );
-
-            i = i + 1
+            }
         }
 
-        if i == 0 {
+        let cat_path = addon_path.join(cat);
+        if let Ok(iter) = fs::read_dir(&cat_path) {
+            for file in iter {
+                if let Ok(entry) = file {
+                    added_files.push(entry.file_name().to_string_lossy().to_string());
+                }
+            }
+        }
+
+        content_files.sort();
+        added_files.sort();
+
+        // 3. Выводим файлы контента
+        for file_name in &content_files {
+            if added_files.contains(file_name) {
+                println!("  {}", style(file_name).cyan());
+            } else {
+                println!("  {}", style(file_name).bright().black());
+            }
+            total_files += 1;
+        }
+
+        for file_name in &added_files {
+            if !content_files.contains(file_name) {
+                println!("  {}", style(file_name).green());
+                total_files += 1;
+            }
+        }
+
+        if total_files == 0 {
             println!("{}", style("  empty...").bright().black());
         }
     }
 
-    println!("Press any key to return to menu...");
+    println!("\nPress any key to return to menu...");
 
     io::stdout().flush().unwrap();
 
@@ -481,8 +624,9 @@ fn main() {
     };
 
     let app_path = app.display().to_string();
-
     let addon_path = app.join("garrysmod").join("addons").join(ADDON_NAME);
+
+    check_content();
 
     loop {
         let addon_folder_exist = match fs::exists(&addon_path) {
